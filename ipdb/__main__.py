@@ -52,6 +52,9 @@ try:
             else:
                 self.history_last = None
 
+            #Interact using the ipython embed console which is much better
+            self.do_alias("interact from IPython import embed; embed()")
+
         def parseline(self, line):
             """Append the line in the history file before parsing"""
             # the line has to be different from the last history entry and not
