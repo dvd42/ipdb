@@ -4,50 +4,120 @@
 # Redistributable under the revised BSD license
 # https://opensource.org/licenses/BSD-3-Clause
 
-from __future__ import print_function
+
+from inspect import getargspec
 import os
 import sys
 
 from contextlib import contextmanager
 
-__version__= "0.10.3"
 
-from IPython import get_ipython
-from IPython.core.debugger import BdbQuit_excepthook
-from IPython.terminal.ipapp import TerminalIPythonApp
-from IPython.terminal.embed import InteractiveShellEmbed
+def import_module(possible_modules, needed_module):
+    """Make it more resilient to different versions of IPython and try to
+    find a module."""
+    count = len(possible_modules)
+    for module in possible_modules:
+        try:
+            return __import__(module, fromlist=[needed_module])
+        except ImportError:
+            count -= 1
+            if count == 0:
+                raise
+try:
+    # IPython 5.0 and newer
+    from IPython.terminal.debugger import TerminalPdb
+    from IPython.core.debugger import BdbQuit_excepthook
+
+    from IPython.paths import locate_profile
+    try:
+        history_path = os.path.join(locate_profile(), 'ipdb_history')
+    except (IOError, OSError):
+        history_path = os.path.join(os.path.expanduser('~'), '.ipdb_history')
+
+    class Pdb(TerminalPdb):
+        def __init__(self, *args, **kwargs):
+            """Init pdb and load the history file if present"""
+            super(Pdb, self).__init__(*args, **kwargs)
+            try:
+                with open(history_path, 'r') as f:
+                    for line in f.readlines():
+                        line = str(line.replace(os.linesep, ''))
+                        self.shell.debugger_history._loaded_strings.append(line)
+            except IOError:
+                open(history_path, 'a');
+
+            # remember the last history entry if present
+            if len(self.shell.debugger_history._loaded_strings) > 0:
+                self.history_last = self.shell.debugger_history._loaded_strings[-1]
+            else:
+                self.history_last = None
+
+        def parseline(self, line):
+            """Append the line in the history file before parsing"""
+            # the line has to be different from the last history entry and not
+            # void or equal to EOF
+            if line not in (self.history_last, 'EOF', ''):
+                # update the last history entry
+                self.history_last = line
+                # write the line in the history file if not already there
+                if line not in self.shell.debugger_history._loaded_strings[:-1]:
+                    self.shell.debugger_history._loaded_strings.append(line)
+                    try:
+                        with open(history_path, 'a') as f:
+                            f.write(line + os.linesep)
+                    except IOError:
+                        pass
+            return super(Pdb, self).parseline(line)
 
 
-shell = get_ipython()
-if shell is None:
-    # Not inside IPython
+except ImportError:
+    from IPython.core.debugger import Pdb, BdbQuit_excepthook
+
+possible_modules = ['IPython.terminal.ipapp',           # Newer IPython
+                    'IPython.frontend.terminal.ipapp']  # Older IPython
+
+app = import_module(possible_modules, "TerminalIPythonApp")
+TerminalIPythonApp = app.TerminalIPythonApp
+
+possible_modules = ['IPython.terminal.embed',           # Newer IPython
+                    'IPython.frontend.terminal.embed']  # Older IPython
+embed = import_module(possible_modules, "InteractiveShellEmbed")
+InteractiveShellEmbed = embed.InteractiveShellEmbed
+try:
+    get_ipython
+except NameError:
     # Build a terminal app in order to force ipython to load the
     # configuration
     ipapp = TerminalIPythonApp()
     # Avoid output (banner, prints)
     ipapp.interact = False
-    ipapp.initialize(['--no-term-title'])
-    shell = ipapp.shell
+    ipapp.initialize([])
+    def_colors = ipapp.shell.colors
 else:
-    # Running inside IPython
+    # If an instance of IPython is already running try to get an instance
+    # of the application. If there is no TerminalIPythonApp instanciated
+    # the instance method will create a new one without loading the config.
+    # i.e: if we are in an embed instance we do not want to load the config.
+    ipapp = TerminalIPythonApp.instance()
+    shell = get_ipython()
+    def_colors = shell.colors
 
     # Detect if embed shell or not and display a message
     if isinstance(shell, InteractiveShellEmbed):
-        sys.stderr.write(
+        shell.write_err(
             "\nYou are currently into an embedded ipython shell,\n"
             "the configuration will not be loaded.\n\n"
         )
 
-# Let IPython decide about which debugger class to use
-# This is especially important for tools that fiddle with stdout
-debugger_cls = shell.debugger_cls
+def_exec_lines = [line + '\n' for line in ipapp.exec_lines]
 
-def _init_pdb(context=3, commands=[]):
-    try:
-        p = debugger_cls(context=context)
-    except TypeError:
-        p = debugger_cls()
-    p.rcLines.extend(commands)
+
+def _init_pdb(context=3):
+    if 'context' in getargspec(Pdb.__init__)[0]:
+        p = Pdb(def_colors, context=context)
+    else:
+        p = Pdb(def_colors)
+    p.rcLines += def_exec_lines
     return p
 
 
@@ -108,52 +178,25 @@ def launch_ipdb_on_exception():
         pass
 
 
-_usage = """\
-usage: python -m ipdb [-c command] ... pyfile [arg] ...
-
-Debug the Python program given by pyfile.
-
-Initial commands are read from .pdbrc files in your home directory
-and in the current directory, if they exist.  Commands supplied with
--c are executed after commands from .pdbrc files.
-
-To let the script run until an exception occurs, use "-c continue".
-To let the script run up to a given line X in the debugged file, use
-"-c 'until X'"
-ipdb version %s.""" % __version__
-
-
 def main():
     import traceback
     import sys
-    import getopt
-
     try:
         from pdb import Restart
     except ImportError:
         class Restart(Exception):
             pass
-    
-    opts, args = getopt.getopt(sys.argv[1:], 'hc:', ['help', 'command='])
 
-    commands = []
-    for opt, optarg in opts:
-        if opt in ['-h', '--help']:
-            print(_usage)
-            sys.exit()
-        elif opt in ['-c', '--command']:
-            commands.append(optarg)
-
-    if not args:
-        print(_usage)
+    if not sys.argv[1:] or sys.argv[1] in ("--help", "-h"):
+        print("usage: ipdb.py scriptfile [arg] ...")
         sys.exit(2)
-    
-    mainpyfile = args[0]     # Get script filename
+
+    mainpyfile = sys.argv[1]     # Get script filename
     if not os.path.exists(mainpyfile):
         print('Error:', mainpyfile, 'does not exist')
         sys.exit(1)
 
-    sys.argv = args     # Hide "pdb.py" from argument list
+    del sys.argv[0]         # Hide "pdb.py" from argument list
 
     # Replace pdb's dir with script's dir in front of module search path.
     sys.path[0] = os.path.dirname(mainpyfile)
@@ -162,7 +205,7 @@ def main():
     # modified by the script being debugged. It's a bad idea when it was
     # changed by the user from the command line. There is a "restart" command
     # which allows explicit specification of command line arguments.
-    pdb = _init_pdb(commands=commands)
+    pdb = _init_pdb()
     while 1:
         try:
             pdb._runscript(mainpyfile)
