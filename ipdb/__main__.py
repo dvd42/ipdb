@@ -63,13 +63,12 @@ try:
                 # update the last history entry
                 self.history_last = line
                 # write the line in the history file if not already there
-                if line not in self.shell.debugger_history._loaded_strings[:-1]:
-                    self.shell.debugger_history._loaded_strings.append(line)
-                    try:
-                        with open(history_path, 'a') as f:
-                            f.write(line + os.linesep)
-                    except IOError:
-                        pass
+                self.shell.debugger_history._loaded_strings.append(line)
+                try:
+                    with open(history_path, 'a') as f:
+                        f.write(line + os.linesep)
+                except IOError:
+                    pass
             return super(Pdb, self).parseline(line)
 
 
