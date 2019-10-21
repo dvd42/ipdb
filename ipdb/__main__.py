@@ -53,7 +53,8 @@ try:
                 self.history_last = None
 
             #Interact using the ipython embed console which is much better
-            self.do_alias("interact from IPython import embed; embed()")
+            self.do_alias('interact from IPython import embed; embed(colors="neutral")')
+
 
         def parseline(self, line):
             """Append the line in the history file before parsing"""
