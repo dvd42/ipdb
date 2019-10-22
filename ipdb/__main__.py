@@ -55,12 +55,19 @@ try:
             #Interact using the ipython embed console which is much better
             self.do_alias('interact from IPython import embed; embed(colors="neutral")')
 
+            self.commands = []
+            for n in self.get_names():
+                if n[:3] == 'do_':
+                    self.commands.append(n[3:])
 
         def parseline(self, line):
             """Append the line in the history file before parsing"""
-            # the line has to be different from the last history entry and not
-            # void or equal to EOF
-            if line not in (self.history_last, 'EOF', ''):
+
+            is_command = any([cmd.startswith(line.split()[0]) for cmd in self.commands])
+
+            # the line has to be different from the last history entry, not EOF, not
+            # void and not a command
+            if line not in (self.history_last, 'EOF', '') and not is_command:
                 # update the last history entry
                 self.history_last = line
                 # write the line in the history file if not already there
