@@ -63,7 +63,9 @@ try:
         def parseline(self, line):
             """Append the line in the history file before parsing"""
 
-            is_command = any([cmd.startswith(line.split()[0]) for cmd in self.commands])
+            is_command = True
+            if line not in ('EOF' , ''):
+                is_command = any([cmd.startswith(line.split()[0]) for cmd in self.commands])
 
             # the line has to be different from the last history entry, not EOF, not
             # void and not a command
